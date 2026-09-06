@@ -13,7 +13,7 @@ int main(int argc, char** argv) {
     }
 
     Fl::scheme("gtk+");
-    MainWindow win(w, h, "MineLaunch - Minimal Minecraft Launcher");
+    MainWindow win(w, h, "Lightcraft");
     win.show(argc, argv);
     return Fl::run();
 }

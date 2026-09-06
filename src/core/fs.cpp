@@ -7,7 +7,7 @@ namespace core {
 static fs::path base_dir() {
     const char* home = std::getenv("HOME");
     if (!home) home = "/tmp";
-    return fs::path(home) / ".minelaunch";
+    return fs::path(home) / ".lightcraft";
 }
 
 fs::path data_dir()       { return base_dir(); }

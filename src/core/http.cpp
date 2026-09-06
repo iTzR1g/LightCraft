@@ -35,7 +35,7 @@ static CURL* make_handle() {
     curl_easy_setopt(h, CURLOPT_MAXREDIRS, 10L);
     curl_easy_setopt(h, CURLOPT_CONNECTTIMEOUT, 30L);
     curl_easy_setopt(h, CURLOPT_TIMEOUT, 300L);
-    curl_easy_setopt(h, CURLOPT_USERAGENT, "MineLaunch/0.1");
+    curl_easy_setopt(h, CURLOPT_USERAGENT, "Lightcraft/0.1");
     return h;
 }
 

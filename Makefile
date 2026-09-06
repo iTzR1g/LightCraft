@@ -27,7 +27,7 @@ DESTDIR  ?=
 
 SRCS := $(wildcard src/core/*.cpp src/launcher/*.cpp src/ui/*.cpp src/*.cpp) vendor/cJSON.c
 OBJS := $(patsubst %.cpp,%.o,$(patsubst %.c,%.o,$(SRCS)))
-BIN  := minelaunch
+BIN  := lightcraft
 
 .PHONY: all clean install uninstall
 

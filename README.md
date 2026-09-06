@@ -1,4 +1,4 @@
-# MineLaunch
+# Lightcraft
 
 A super-minimalist Minecraft launcher built for low-end hardware.
 Targets 32-bit Intel Atom with 1GB RAM running iceWM.
@@ -68,12 +68,12 @@ sudo make install PREFIX=/usr
 ## Usage
 
 ```sh
-minelaunch
+lightcraft
 # or with custom window size
-minelaunch 600 400
+lightcraft 600 400
 ```
 
-Data is stored in `~/.minelaunch/`.
+Data is stored in `~/.lightcraft/`.
 
 ## Architecture
 
