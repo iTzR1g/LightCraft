@@ -152,7 +152,7 @@ bool Downloader::download_assets(const std::string& version_json,
 }
 
 bool Downloader::download_all(const std::string& version_id,
-                              const std::string& game_dir,
+                              const std::string& /* game_dir */,
                               ProgressCallback progress) {
     m_current = 0;
     m_total = 3;

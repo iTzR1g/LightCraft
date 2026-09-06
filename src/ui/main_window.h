@@ -45,6 +45,7 @@ private:
     launcher::Downloader      m_downloader;
     int m_selected = -1;
     bool m_settings_open = false;
+    float m_progress_val = 0;
 
     // Callbacks
     static void on_new(Fl_Widget* w, void* data);
@@ -54,6 +55,12 @@ private:
     static void on_save(Fl_Widget* w, void* data);
     static void on_cancel(Fl_Widget* w, void* data);
     static void on_list_select(Fl_Widget* w, void* data);
+
+    // Async message IDs for Fl::awake from download thread
+    enum AsyncMsg { MSG_PROGRESS, MSG_DONE, MSG_FAIL };
+
+    static void async_handler(void* msg_ptr);
+    void handle_async(AsyncMsg msg);
 
     void refresh_list();
     void show_settings(int idx = -1);

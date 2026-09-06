@@ -6,6 +6,7 @@
 #include <FL/Fl_Text_Buffer.H>
 #include <FL/fl_ask.H>
 #include <thread>
+#include <cstdint>
 
 MainWindow::MainWindow(int w, int h, const char* title)
     : Fl_Double_Window(w, h, title)
@@ -181,7 +182,7 @@ void MainWindow::on_delete(Fl_Widget*, void* data) {
     if (sel < 0 || sel >= (int)self->m_mgr.instances().size()) return;
 
     auto& inst = self->m_mgr.instances()[sel];
-    if (fl_ask("Delete instance '%s'?", inst.name.c_str()) == 1) {
+    if (fl_choice("Delete instance '%s'?", "No", "Yes", nullptr, inst.name.c_str()) == 1) {
         self->m_mgr.delete_instance(inst.name);
         self->refresh_list();
     }
@@ -230,8 +231,31 @@ void MainWindow::on_cancel(Fl_Widget*, void* data) {
     static_cast<MainWindow*>(data)->hide_settings();
 }
 
-void MainWindow::on_list_select(Fl_Widget*, void* data) {
+void MainWindow::on_list_select(Fl_Widget*, void* /* data */) {
     // Single click selects, double click opens settings
+}
+
+void MainWindow::async_handler(void* msg_ptr) {
+    auto msg = static_cast<AsyncMsg>(reinterpret_cast<intptr_t>(msg_ptr));
+    // We use Fl::find() trick: the active MainWindow is the first window
+    auto* win = dynamic_cast<MainWindow*>(Fl::first_window());
+    if (win) win->handle_async(msg);
+}
+
+void MainWindow::handle_async(AsyncMsg msg) {
+    switch (msg) {
+        case MSG_DONE:
+            set_status("Launching...");
+            m_progress->value(1.0);
+            break;
+        case MSG_FAIL:
+            set_status("Download failed!");
+            m_progress->value(0);
+            break;
+        case MSG_PROGRESS:
+            m_progress->value(m_progress_val);
+            break;
+    }
 }
 
 void MainWindow::do_download_and_launch(int idx) {
@@ -240,33 +264,24 @@ void MainWindow::do_download_and_launch(int idx) {
     m_progress->value(0);
     Fl::flush();
 
-    // Run download in background thread
     std::string version = inst.mc_version;
     std::string game_dir = inst.instance_dir() + "/.minecraft";
 
     std::thread([this, version, game_dir, inst]() {
         bool ok = m_downloader.download_all(version, game_dir,
-            [this](int cur, int total, const std::string& file) {
+            [this](int cur, int total, const std::string&) {
                 if (total > 0) {
                     float pct = (float)cur / (float)total;
-                    Fl::awake([this, pct]() {
-                        m_progress->value(pct);
-                    });
+                    m_progress_val = pct;
+                    Fl::awake(async_handler, reinterpret_cast<void*>(static_cast<intptr_t>(MSG_PROGRESS)));
                 }
             });
 
         if (ok) {
-            Fl::awake([this]() {
-                set_status("Launching...");
-                m_progress->value(1.0);
-            });
-            // Launch on separate thread to not block UI
+            Fl::awake(async_handler, reinterpret_cast<void*>(static_cast<intptr_t>(MSG_DONE)));
             launcher::launch_minecraft(inst);
         } else {
-            Fl::awake([this]() {
-                set_status("Download failed!");
-                m_progress->value(0);
-            });
+            Fl::awake(async_handler, reinterpret_cast<void*>(static_cast<intptr_t>(MSG_FAIL)));
         }
     }).detach();
 }
