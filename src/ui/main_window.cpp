@@ -237,50 +237,59 @@ void MainWindow::on_list_select(Fl_Widget*, void* /* data */) {
 
 void MainWindow::async_handler(void* msg_ptr) {
     auto msg = static_cast<AsyncMsg>(reinterpret_cast<intptr_t>(msg_ptr));
-    // We use Fl::find() trick: the active MainWindow is the first window
     auto* win = dynamic_cast<MainWindow*>(Fl::first_window());
     if (win) win->handle_async(msg);
 }
 
 void MainWindow::handle_async(AsyncMsg msg) {
     switch (msg) {
+        case MSG_STATUS:
+            set_status(m_async_status.c_str());
+            break;
+        case MSG_PROGRESS:
+            m_progress->value(m_progress_val);
+            if (!m_async_status.empty()) set_status(m_async_status.c_str());
+            break;
         case MSG_DONE:
             set_status("Launching...");
             m_progress->value(1.0);
             break;
         case MSG_FAIL:
-            set_status("Download failed!");
+            set_status(m_async_status.empty() ? "Download failed!" : m_async_status.c_str());
             m_progress->value(0);
-            break;
-        case MSG_PROGRESS:
-            m_progress->value(m_progress_val);
             break;
     }
 }
 
 void MainWindow::do_download_and_launch(int idx) {
     auto& inst = m_mgr.instances()[idx];
-    set_status("Downloading files...");
+    set_status("Downloading...");
     m_progress->value(0);
     Fl::flush();
 
     std::string version = inst.mc_version;
     std::string game_dir = inst.instance_dir() + "/.minecraft";
+    MainWindow* self = this;
 
-    std::thread([this, version, game_dir, inst]() {
-        bool ok = m_downloader.download_all(version, game_dir,
-            [this](int cur, int total, const std::string&) {
+    std::thread([self, version, game_dir, inst]() {
+        bool ok = self->m_downloader.download_all(version, game_dir,
+            [self](int cur, int total, const std::string& file) {
                 if (total > 0) {
-                    float pct = (float)cur / (float)total;
-                    m_progress_val = pct;
-                    Fl::awake(async_handler, reinterpret_cast<void*>(static_cast<intptr_t>(MSG_PROGRESS)));
+                    self->m_progress_val = (float)cur / (float)total;
                 }
+                if (!file.empty()) {
+                    // Just show filename, not full path
+                    auto pos = file.find_last_of('/');
+                    self->m_async_status = (pos != std::string::npos) ? file.substr(pos + 1) : file;
+                }
+                Fl::awake(async_handler, reinterpret_cast<void*>(static_cast<intptr_t>(MSG_PROGRESS)));
             });
 
         if (ok) {
             Fl::awake(async_handler, reinterpret_cast<void*>(static_cast<intptr_t>(MSG_DONE)));
             launcher::launch_minecraft(inst);
         } else {
+            if (self->m_async_status.empty()) self->m_async_status = "Download failed!";
             Fl::awake(async_handler, reinterpret_cast<void*>(static_cast<intptr_t>(MSG_FAIL)));
         }
     }).detach();

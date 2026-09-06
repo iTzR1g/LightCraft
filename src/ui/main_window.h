@@ -57,10 +57,12 @@ private:
     static void on_list_select(Fl_Widget* w, void* data);
 
     // Async message IDs for Fl::awake from download thread
-    enum AsyncMsg { MSG_PROGRESS, MSG_DONE, MSG_FAIL };
+    enum AsyncMsg { MSG_PROGRESS, MSG_STATUS, MSG_DONE, MSG_FAIL };
 
     static void async_handler(void* msg_ptr);
     void handle_async(AsyncMsg msg);
+
+    std::string m_async_status;
 
     void refresh_list();
     void show_settings(int idx = -1);
