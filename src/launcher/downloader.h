@@ -28,6 +28,7 @@ private:
     bool ensure_dir_for(const std::string& path);
     bool verify_sha1(const std::string& path, const std::string& expected);
     void report(ProgressCallback progress);
+    bool extract_natives(const std::string& jar_path, const std::string& dest_dir);
 
     int m_current = 0;
     int m_total = 0;

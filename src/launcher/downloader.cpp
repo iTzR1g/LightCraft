@@ -2,6 +2,7 @@
 #include "core/http.h"
 #include "core/json.h"
 #include "core/fs.h"
+#include "core/process.h"
 #include <filesystem>
 
 namespace fs = std::filesystem;
@@ -36,6 +37,14 @@ bool Downloader::download_file(const DownloadTask& task, ProgressCallback progre
     m_current++;
     report(progress);
     return ok;
+}
+
+bool Downloader::extract_natives(const std::string& jar_path, const std::string& dest_dir) {
+    std::error_code ec;
+    fs::create_directories(dest_dir, ec);
+    core::ProcessResult res = core::run_process("unzip", {"-o", "-j", jar_path, "-d", dest_dir});
+    // -o = overwrite, -j = junk paths (flat extract)
+    return res.exit_code == 0;
 }
 
 bool Downloader::download_all(const std::string& version_id,
@@ -101,8 +110,9 @@ bool Downloader::download_all(const std::string& version_id,
         return false;
     }
 
-    // Build library tasks
+    // Build library + native tasks
     std::vector<DownloadTask> lib_tasks;
+    std::vector<DownloadTask> native_tasks;
     {
         auto root = core::json_parse(version_json);
         if (!root) return false;
@@ -113,14 +123,42 @@ bool Downloader::download_all(const std::string& version_id,
                 auto* lib = cJSON_GetArrayItem(libs, i);
                 auto* dl = core::json_get_object(lib, "downloads");
                 if (!dl) continue;
+
+                // Regular artifact
                 auto* artifact = core::json_get_object(dl, "artifact");
-                if (!artifact) continue;
-                std::string path = core::json_get_string(artifact, "path");
-                if (path.empty()) continue;
-                std::string url = std::string(LIBRARIES_URL) + path;
-                std::string dest = (fs::path(core::libraries_dir()) / path).string();
-                std::string sha1 = core::json_get_string(artifact, "sha1");
-                lib_tasks.push_back({url, dest, sha1});
+                if (artifact) {
+                    std::string path = core::json_get_string(artifact, "path");
+                    if (!path.empty()) {
+                        std::string url = std::string(LIBRARIES_URL) + path;
+                        std::string dest = (fs::path(core::libraries_dir()) / path).string();
+                        std::string sha1 = core::json_get_string(artifact, "sha1");
+                        lib_tasks.push_back({url, dest, sha1});
+                    }
+                }
+
+                // Native classifier (natives-linux)
+                auto* classifiers = core::json_get_object(dl, "classifiers");
+                if (classifiers) {
+                    auto* natives_linux = core::json_get_object(classifiers, "natives-linux");
+                    if (natives_linux) {
+                        std::string path = core::json_get_string(natives_linux, "path");
+                        std::string url = core::json_get_string(natives_linux, "url");
+                        if (url.empty() && !path.empty()) {
+                            url = std::string(LIBRARIES_URL) + path;
+                        }
+                        if (!url.empty()) {
+                            std::string dest;
+                            if (!path.empty()) {
+                                dest = (fs::path(core::libraries_dir()) / path).string();
+                            } else {
+                                std::string name = "native_" + std::to_string(i) + ".jar";
+                                dest = (fs::path(core::libraries_dir()) / "natives" / name).string();
+                            }
+                            std::string sha1 = core::json_get_string(natives_linux, "sha1");
+                            native_tasks.push_back({url, dest, sha1});
+                        }
+                    }
+                }
             }
         }
     }
@@ -170,25 +208,34 @@ bool Downloader::download_all(const std::string& version_id,
         }
     }
 
-    m_total = (int)lib_tasks.size() + (int)asset_tasks.size() + 1;
+    int native_jar_count = (int)native_tasks.size();
+    m_total = (int)lib_tasks.size() + (int)asset_tasks.size() + native_jar_count + 1;
     m_current = 0;
 
     // Download libraries
     if (!lib_tasks.empty()) {
-        if (progress) progress(m_current, m_total, "Downloading libraries (0/" + std::to_string(lib_tasks.size()) + ")...");
         for (auto& t : lib_tasks) {
+            if (progress) progress(m_current, m_total, "libs (" + std::to_string(m_current) + "/" + std::to_string(lib_tasks.size()) + ")");
             download_file(t, nullptr);
-            if (progress) progress(m_current, m_total, "Downloading libraries (" + std::to_string(m_current) + "/" + std::to_string(lib_tasks.size()) + ")...");
+        }
+    }
+
+    // Download native jars
+    std::string natives_dir = (fs::path(core::libraries_dir()) / "natives").string();
+    for (auto& t : native_tasks) {
+        if (progress) progress(m_current, m_total, "natives (" + std::to_string(m_current) + "/" + std::to_string(native_tasks.size()) + ")");
+        if (download_file(t, nullptr)) {
+            extract_natives(t.dest, natives_dir);
         }
     }
 
     // Download assets
     if (!asset_tasks.empty()) {
-        if (progress) progress(m_current, m_total, "Downloading assets (0/" + std::to_string(asset_tasks.size()) + ")...");
         for (auto& t : asset_tasks) {
+            if (progress) progress(m_current, m_total, "assets (" + std::to_string(m_current) + "/" + std::to_string(asset_tasks.size()) + ")");
             download_file(t, nullptr);
-            if (m_current % 50 == 0 && progress) {
-                progress(m_current, m_total, "Downloading assets (" + std::to_string(m_current) + "/" + std::to_string(asset_tasks.size()) + ")...");
+            if (m_current % 100 == 0 && progress) {
+                progress(m_current, m_total, "assets (" + std::to_string(m_current) + "/" + std::to_string(asset_tasks.size()) + ")");
             }
         }
     }
@@ -210,7 +257,7 @@ bool Downloader::download_all(const std::string& version_id,
         DownloadTask task{url, dest, sha1};
         if (progress) progress(m_current, m_total, "Downloading client jar...");
         if (!download_file(task, nullptr)) {
-            if (progress) progress(m_current, m_total, "Failed to download client jar: " + core::http_last_error());
+            if (progress) progress(m_current, m_total, "Failed: " + core::http_last_error());
             return false;
         }
     }
