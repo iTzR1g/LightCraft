@@ -6,7 +6,15 @@
 #include <FL/Fl_Text_Buffer.H>
 #include <FL/fl_ask.H>
 #include <thread>
-#include <cstdint>
+#include <cstring>
+
+static void timer_cb(void* data) {
+    auto* win = static_cast<MainWindow*>(data);
+    win->apply_progress();
+    if (win->m_downloading) {
+        Fl::repeat_timeout(0.1, timer_cb, data);
+    }
+}
 
 MainWindow::MainWindow(int w, int h, const char* title)
     : Fl_Double_Window(w, h, title)
@@ -15,7 +23,6 @@ MainWindow::MainWindow(int w, int h, const char* title)
     int bw = 80, bh = 28, pad = 6;
     int y = pad;
 
-    // Top buttons
     m_btn_new = new Fl_Button(pad, y, bw, bh, "New");
     m_btn_new->callback(on_new, this);
     m_btn_delete = new Fl_Button(pad+bw+pad, y, bw, bh, "Delete");
@@ -26,14 +33,12 @@ MainWindow::MainWindow(int w, int h, const char* title)
     m_btn_play->labelcolor(FL_WHITE);
     y += bh + pad;
 
-    // Instance list
     int list_h = h - y - bh - pad*3;
     m_instance_list = new Fl_Select_Browser(pad, y, w-pad*2, list_h);
     m_instance_list->callback(on_list_select, this);
     m_instance_list->textsize(13);
     y += list_h + pad;
 
-    // Settings panel (overlaid, hidden initially)
     int sy = h/4;
     int sh = h/2;
     int sw = w - pad*2;
@@ -55,7 +60,6 @@ MainWindow::MainWindow(int w, int h, const char* title)
     m_btn_cancel = new Fl_Button(sx+sw-bw-pad, sy+sh-bh-pad*2, bw, bh, "Cancel");
     m_btn_cancel->callback(on_cancel, this);
 
-    // Status bar
     m_status = new Fl_Text_Display(pad, h-bh-pad, w-pad*2, bh);
     m_status->buffer(new Fl_Text_Buffer());
 
@@ -69,9 +73,22 @@ MainWindow::MainWindow(int w, int h, const char* title)
 
     resizable(m_instance_list);
 
-    // Load data
     m_mgr.refresh();
     refresh_list();
+}
+
+void MainWindow::set_progress(float val, const std::string& text) {
+    std::lock_guard<std::mutex> lock(m_mx);
+    m_progress_val = val;
+    snprintf(m_status_buf, sizeof(m_status_buf), "%s", text.c_str());
+}
+
+void MainWindow::apply_progress() {
+    std::lock_guard<std::mutex> lock(m_mx);
+    m_progress->value(m_progress_val);
+    if (m_status_buf[0]) {
+        m_status->buffer()->text(m_status_buf);
+    }
 }
 
 void MainWindow::refresh_list() {
@@ -103,7 +120,6 @@ void MainWindow::show_settings(int idx) {
     m_btn_save->show();
     m_btn_cancel->show();
 
-    // Populate version choice
     m_choice_version->clear();
     if (!m_manifest.loaded) {
         set_status("Fetching version list...");
@@ -129,7 +145,6 @@ void MainWindow::show_settings(int idx) {
         m_slider_ram->value(inst.ram_max);
         m_input_username->value(inst.username.c_str());
 
-        // Find version in choice
         for (int i = 0; i < m_choice_version->size(); i++) {
             if (m_choice_version->text(i+1) == inst.mc_version) {
                 m_choice_version->value(i);
@@ -232,65 +247,46 @@ void MainWindow::on_cancel(Fl_Widget*, void* data) {
 }
 
 void MainWindow::on_list_select(Fl_Widget*, void* /* data */) {
-    // Single click selects, double click opens settings
-}
-
-void MainWindow::async_handler(void* msg_ptr) {
-    auto msg = static_cast<AsyncMsg>(reinterpret_cast<intptr_t>(msg_ptr));
-    auto* win = dynamic_cast<MainWindow*>(Fl::first_window());
-    if (win) win->handle_async(msg);
-}
-
-void MainWindow::handle_async(AsyncMsg msg) {
-    switch (msg) {
-        case MSG_STATUS:
-            set_status(m_async_status.c_str());
-            break;
-        case MSG_PROGRESS:
-            m_progress->value(m_progress_val);
-            if (!m_async_status.empty()) set_status(m_async_status.c_str());
-            break;
-        case MSG_DONE:
-            set_status("Launching...");
-            m_progress->value(1.0);
-            break;
-        case MSG_FAIL:
-            set_status(m_async_status.empty() ? "Download failed!" : m_async_status.c_str());
-            m_progress->value(0);
-            break;
-    }
 }
 
 void MainWindow::do_download_and_launch(int idx) {
     auto& inst = m_mgr.instances()[idx];
     set_status("Downloading...");
     m_progress->value(0);
+    m_downloading = true;
     Fl::flush();
 
     std::string version = inst.mc_version;
     std::string game_dir = inst.instance_dir() + "/.minecraft";
     MainWindow* self = this;
 
+    // Start polling timer
+    Fl::add_timeout(0.1, timer_cb, this);
+
     std::thread([self, version, game_dir, inst]() {
         bool ok = self->m_downloader.download_all(version, game_dir,
             [self](int cur, int total, const std::string& file) {
-                if (total > 0) {
-                    self->m_progress_val = (float)cur / (float)total;
-                }
+                float pct = (total > 0) ? (float)cur / (float)total : 0;
+                std::string label;
                 if (!file.empty()) {
-                    // Just show filename, not full path
                     auto pos = file.find_last_of('/');
-                    self->m_async_status = (pos != std::string::npos) ? file.substr(pos + 1) : file;
+                    label = (pos != std::string::npos) ? file.substr(pos + 1) : file;
+                } else {
+                    label = std::to_string(cur) + " / " + std::to_string(total);
                 }
-                Fl::awake(async_handler, reinterpret_cast<void*>(static_cast<intptr_t>(MSG_PROGRESS)));
+                self->set_progress(pct, label);
             });
 
+        self->m_downloading = false;
+
         if (ok) {
-            Fl::awake(async_handler, reinterpret_cast<void*>(static_cast<intptr_t>(MSG_DONE)));
+            self->set_progress(1.0f, "Launching...");
             launcher::launch_minecraft(inst);
         } else {
-            if (self->m_async_status.empty()) self->m_async_status = "Download failed!";
-            Fl::awake(async_handler, reinterpret_cast<void*>(static_cast<intptr_t>(MSG_FAIL)));
+            std::string err = "Download failed";
+            std::string last = core::http_last_error();
+            if (!last.empty()) err += ": " + last;
+            self->set_progress(0, err);
         }
     }).detach();
 }

@@ -12,6 +12,7 @@
 #include "launcher/instance_manager.h"
 #include "launcher/manifest.h"
 #include "launcher/downloader.h"
+#include <mutex>
 
 class MainWindow : public Fl_Double_Window {
 public:
@@ -45,24 +46,15 @@ private:
     launcher::Downloader      m_downloader;
     int m_selected = -1;
     bool m_settings_open = false;
+
+    // Thread-safe progress
+    std::mutex m_mx;
     float m_progress_val = 0;
+    char m_status_buf[256] = {};
+    bool m_downloading = false;
 
-    // Callbacks
-    static void on_new(Fl_Widget* w, void* data);
-    static void on_delete(Fl_Widget* w, void* data);
-    static void on_play(Fl_Widget* w, void* data);
-    static void on_settings(Fl_Widget* w, void* data);
-    static void on_save(Fl_Widget* w, void* data);
-    static void on_cancel(Fl_Widget* w, void* data);
-    static void on_list_select(Fl_Widget* w, void* data);
-
-    // Async message IDs for Fl::awake from download thread
-    enum AsyncMsg { MSG_PROGRESS, MSG_STATUS, MSG_DONE, MSG_FAIL };
-
-    static void async_handler(void* msg_ptr);
-    void handle_async(AsyncMsg msg);
-
-    std::string m_async_status;
+    void set_progress(float val, const std::string& text);
+    void apply_progress();
 
     void refresh_list();
     void show_settings(int idx = -1);
