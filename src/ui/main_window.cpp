@@ -1,5 +1,6 @@
 #include "ui/main_window.h"
 #include "core/fs.h"
+#include "core/http.h"
 #include "core/java.h"
 #include "launcher/launch.h"
 #include <FL/Fl_Box.H>
