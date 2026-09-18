@@ -53,41 +53,55 @@ bool Downloader::download_all(const std::string& version_id,
     if (core::file_exists(version_file)) {
         version_json = core::read_file(version_file);
     } else {
-        std::string manifest_json = core::http_get(
-            "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json");
+        std::string manifest_url = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json";
+        std::string manifest_json = core::http_get(manifest_url);
         if (manifest_json.empty()) {
-            if (progress) progress(0, 0, "Failed to fetch version manifest");
+            if (progress) progress(0, 0, "Network error: " + core::http_last_error());
             return false;
         }
 
         auto manifest = core::json_parse(manifest_json);
-        if (!manifest) return false;
+        if (!manifest) {
+            if (progress) progress(0, 0, "Failed to parse manifest JSON");
+            return false;
+        }
 
         auto* versions = core::json_get_array(manifest.get(), "versions");
-        if (!versions) return false;
+        if (!versions) {
+            if (progress) progress(0, 0, "No versions array in manifest");
+            return false;
+        }
 
+        bool found = false;
         int n = cJSON_GetArraySize(versions);
         for (int i = 0; i < n; i++) {
             auto* v = cJSON_GetArrayItem(versions, i);
             if (core::json_get_string(v, "id") == version_id) {
                 std::string url = core::json_get_string(v, "url");
-                if (progress) progress(0, 0, "Fetching version info...");
+                if (progress) progress(0, 0, "Fetching version info for " + version_id + "...");
                 version_json = core::http_get(url);
                 if (!version_json.empty()) {
                     fs::create_directories(versions_dir);
                     core::write_file(version_file, version_json);
+                    found = true;
+                } else {
+                    if (progress) progress(0, 0, "Failed to fetch version JSON: " + core::http_last_error());
                 }
                 break;
             }
         }
+        if (!found && version_json.empty()) {
+            if (progress) progress(0, 0, "Version " + version_id + " not found in manifest");
+            return false;
+        }
     }
 
     if (version_json.empty()) {
-        if (progress) progress(0, 0, "Version not found");
+        if (progress) progress(0, 0, "Version data empty");
         return false;
     }
 
-    // Count libraries
+    // Build library tasks
     std::vector<DownloadTask> lib_tasks;
     {
         auto root = core::json_parse(version_json);
@@ -111,7 +125,7 @@ bool Downloader::download_all(const std::string& version_id,
         }
     }
 
-    // Count assets
+    // Build asset tasks
     std::vector<DownloadTask> asset_tasks;
     {
         auto root = core::json_parse(version_json);
@@ -127,7 +141,11 @@ bool Downloader::download_all(const std::string& version_id,
                 std::string index_file = (fs::path(index_dir) / (id + ".json")).string();
 
                 DownloadTask index_task{index_url, index_file, ""};
-                download_file(index_task, nullptr);
+                if (progress) progress(0, 0, "Fetching asset index...");
+                if (!download_file(index_task, nullptr)) {
+                    if (progress) progress(0, 0, "Failed to download asset index: " + core::http_last_error());
+                    return false;
+                }
 
                 std::string index_json = core::read_file(index_file);
                 auto index_root = core::json_parse(index_json);
@@ -152,25 +170,26 @@ bool Downloader::download_all(const std::string& version_id,
         }
     }
 
-    // Count client jar
-    int jar_count = 1;
-
-    m_total = (int)lib_tasks.size() + (int)asset_tasks.size() + jar_count;
+    m_total = (int)lib_tasks.size() + (int)asset_tasks.size() + 1;
     m_current = 0;
 
     // Download libraries
-    for (auto& t : lib_tasks) {
-        if (progress) progress(m_current, m_total, t.dest);
-        if (!download_file(t, nullptr)) {
-            if (progress) progress(m_current, m_total, "Failed: " + t.url);
+    if (!lib_tasks.empty()) {
+        if (progress) progress(m_current, m_total, "Downloading libraries (0/" + std::to_string(lib_tasks.size()) + ")...");
+        for (auto& t : lib_tasks) {
+            download_file(t, nullptr);
+            if (progress) progress(m_current, m_total, "Downloading libraries (" + std::to_string(m_current) + "/" + std::to_string(lib_tasks.size()) + ")...");
         }
     }
 
     // Download assets
-    for (auto& t : asset_tasks) {
-        if (progress) progress(m_current, m_total, t.dest);
-        if (!download_file(t, nullptr)) {
-            if (progress) progress(m_current, m_total, "Failed: " + t.url);
+    if (!asset_tasks.empty()) {
+        if (progress) progress(m_current, m_total, "Downloading assets (0/" + std::to_string(asset_tasks.size()) + ")...");
+        for (auto& t : asset_tasks) {
+            download_file(t, nullptr);
+            if (m_current % 50 == 0 && progress) {
+                progress(m_current, m_total, "Downloading assets (" + std::to_string(m_current) + "/" + std::to_string(asset_tasks.size()) + ")...");
+            }
         }
     }
 
@@ -189,8 +208,11 @@ bool Downloader::download_all(const std::string& version_id,
         std::string dest = (fs::path(versions_dir) / (id + ".jar")).string();
 
         DownloadTask task{url, dest, sha1};
-        if (progress) progress(m_current, m_total, dest);
-        if (!download_file(task, nullptr)) return false;
+        if (progress) progress(m_current, m_total, "Downloading client jar...");
+        if (!download_file(task, nullptr)) {
+            if (progress) progress(m_current, m_total, "Failed to download client jar: " + core::http_last_error());
+            return false;
+        }
     }
 
     if (progress) progress(m_total, m_total, "Done");
