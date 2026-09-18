@@ -96,6 +96,14 @@ bool launch_minecraft(const Instance& inst) {
     args.push_back("--uuid");
     args.push_back(inst.uuid.empty() ? "00000000-0000-0000-0000-000000000000" : inst.uuid);
 
+    // Required by all versions (even offline)
+    args.push_back("--accessToken");
+    args.push_back("0");
+    args.push_back("--userType");
+    args.push_back("legacy");
+    args.push_back("--userProperties");
+    args.push_back("{}");
+
     if (!inst.game_args.empty()) {
         std::istringstream iss(inst.game_args);
         std::string arg;
